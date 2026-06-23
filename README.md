@@ -56,7 +56,7 @@ Optional arguments:
 python3 ingest.py --docs-dir ./docs --chroma-dir ./chroma_db --chunk-size 1024 --chunk-overlap 150
 ```
 
-The local ChromaDB data is persisted in `./chroma_db`.
+Each ingest run clears the existing local ChromaDB collection, then rebuilds the index from all supported files under `./docs` recursively. The local ChromaDB data is persisted in `./chroma_db`.
 
 ## Query
 

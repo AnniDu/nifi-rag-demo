@@ -24,9 +24,21 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_documents(docs_dir: Path):
+def find_supported_files(docs_dir: Path) -> list[Path]:
     if not docs_dir.exists():
         raise FileNotFoundError(f"Docs directory does not exist: {docs_dir}")
+
+    return sorted(
+        path
+        for path in docs_dir.rglob("*")
+        if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS
+    )
+
+
+def load_documents(docs_dir: Path):
+    supported_files = find_supported_files(docs_dir)
+    if not supported_files:
+        raise ValueError(f"No supported documents found in {docs_dir}")
 
     documents = SimpleDirectoryReader(
         input_dir=str(docs_dir),
@@ -61,12 +73,14 @@ def main() -> None:
         chunk_overlap=args.chunk_overlap,
     )
 
+    supported_files = find_supported_files(args.docs_dir)
+    collection = get_chroma_collection(args.chroma_dir, reset=True)
+    print(f"Cleared existing ChromaDB collection in {args.chroma_dir}")
+
     documents = load_documents(args.docs_dir)
     nodes = splitter.get_nodes_from_documents(documents)
     texts = [node.get_content(metadata_mode="none") for node in nodes]
     embeddings = embed_texts(texts, task_type="RETRIEVAL_DOCUMENT")
-
-    collection = get_chroma_collection(args.chroma_dir, reset=True)
     collection.add(
         ids=[node.node_id for node in nodes],
         documents=texts,
@@ -74,6 +88,7 @@ def main() -> None:
         metadatas=[clean_metadata(node.metadata or {}) for node in nodes],
     )
 
+    print(f"Loaded {len(supported_files)} supported files from {args.docs_dir}")
     print(f"Ingested {len(documents)} documents into {args.chroma_dir}")
     print(f"Created {len(nodes)} chunks in ChromaDB")
 
