@@ -68,7 +68,10 @@ Optional arguments:
 
 ```bash
 python3 query.py "How does ExecuteScript handle processor properties?" --top-k 8 --chroma-dir ./chroma_db
+python3 query.py "How do I consume Kafka messages?" --debug
 ```
+
+Use `--debug` to print each retrieved chunk id, source file, distance, and the first 300 characters before the answer.
 
 The answer is grounded only in retrieved chunks. If the retrieved context does not contain the answer, the model is instructed to say it does not know.
 

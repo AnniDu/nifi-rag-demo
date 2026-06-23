@@ -18,6 +18,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("question", nargs="+", help="Question to ask.")
     parser.add_argument("--chroma-dir", type=Path, default=DEFAULT_CHROMA_DIR, help="Directory containing the persisted ChromaDB index.")
     parser.add_argument("--top-k", type=int, default=5, help="Number of chunks to retrieve.")
+    parser.add_argument("--debug", action="store_true", help="Print retrieved chunk diagnostics before answering.")
     return parser.parse_args()
 
 
@@ -44,6 +45,31 @@ def build_context(results) -> tuple[str, list[dict[str, str]]]:
         )
 
     return "\n\n---\n\n".join(context_blocks), sources
+
+
+def chunk_preview(text: str, limit: int = 300) -> str:
+    preview = " ".join(text.split())
+    if len(preview) <= limit:
+        return preview
+    return preview[:limit].rstrip() + "..."
+
+
+def print_debug_chunks(results) -> None:
+    print("Retrieved chunks:")
+    ids = results["ids"][0]
+    documents = results["documents"][0]
+    metadatas = results["metadatas"][0]
+    distances = results["distances"][0]
+
+    for i, (chunk_id, document, metadata, distance) in enumerate(zip(ids, documents, metadatas, distances), start=1):
+        file_name = metadata.get("file_name") or metadata.get("filename") or metadata.get("file_path") or "unknown"
+        distance_text = f"{distance:.4f}" if distance is not None else "n/a"
+        print(f"- result {i}")
+        print(f"  chunk_id: {chunk_id}")
+        print(f"  source_file: {file_name}")
+        print(f"  distance: {distance_text}")
+        print(f"  preview: {chunk_preview(document)}")
+    print()
 
 
 def call_llm(question: str, context: str) -> str:
@@ -74,6 +100,9 @@ def main() -> None:
     if not results["ids"] or not results["ids"][0]:
         print("No relevant chunks found. Run ingest.py first or add documents to ./docs.")
         return
+
+    if args.debug:
+        print_debug_chunks(results)
 
     context, sources = build_context(results)
     answer = call_llm(question, context)
