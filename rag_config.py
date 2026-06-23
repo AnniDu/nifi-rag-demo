@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
+
+import pysqlite3
+
+sys.modules["sqlite3"] = pysqlite3
 
 import chromadb
 from dotenv import load_dotenv
