@@ -3,15 +3,15 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from llama_index.core import Settings, SimpleDirectoryReader, StorageContext, VectorStoreIndex
+from llama_index.core import SimpleDirectoryReader
 from llama_index.core.node_parser import SentenceSplitter
 
 from rag_config import (
     DEFAULT_CHROMA_DIR,
     DEFAULT_DOCS_DIR,
     SUPPORTED_EXTENSIONS,
-    get_chroma_vector_store,
-    get_embedding_model,
+    embed_texts,
+    get_chroma_collection,
 )
 
 
@@ -41,27 +41,41 @@ def load_documents(docs_dir: Path):
     return documents
 
 
+def clean_metadata(metadata: dict) -> dict:
+    cleaned = {}
+    for key, value in metadata.items():
+        if value is None:
+            continue
+        if isinstance(value, (str, int, float, bool)):
+            cleaned[key] = value
+        else:
+            cleaned[key] = str(value)
+    return cleaned
+
+
 def main() -> None:
     args = parse_args()
 
-    Settings.embed_model = get_embedding_model()
-    Settings.node_parser = SentenceSplitter(
+    splitter = SentenceSplitter(
         chunk_size=args.chunk_size,
         chunk_overlap=args.chunk_overlap,
     )
 
     documents = load_documents(args.docs_dir)
-    vector_store = get_chroma_vector_store(args.chroma_dir)
-    storage_context = StorageContext.from_defaults(vector_store=vector_store)
-    index = VectorStoreIndex.from_documents(
-        documents,
-        storage_context=storage_context,
-        show_progress=True,
+    nodes = splitter.get_nodes_from_documents(documents)
+    texts = [node.get_content(metadata_mode="none") for node in nodes]
+    embeddings = embed_texts(texts, task_type="RETRIEVAL_DOCUMENT")
+
+    collection = get_chroma_collection(args.chroma_dir, reset=True)
+    collection.add(
+        ids=[node.node_id for node in nodes],
+        documents=texts,
+        embeddings=embeddings,
+        metadatas=[clean_metadata(node.metadata or {}) for node in nodes],
     )
 
-    nodes = len(index.docstore.docs)
     print(f"Ingested {len(documents)} documents into {args.chroma_dir}")
-    print(f"Created {nodes} chunks in ChromaDB")
+    print(f"Created {len(nodes)} chunks in ChromaDB")
 
 
 if __name__ == "__main__":

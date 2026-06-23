@@ -1,14 +1,11 @@
 from __future__ import annotations
 
 import argparse
-import os
 from pathlib import Path
 
-from dotenv import load_dotenv
-from llama_index.core import Settings, VectorStoreIndex
-from openai import OpenAI
+from google.genai import types
 
-from rag_config import DEFAULT_CHROMA_DIR, PROJECT_ROOT, get_chroma_vector_store, get_embedding_model
+from rag_config import DEFAULT_CHROMA_DIR, embed_texts, get_chroma_collection, get_gemini_client, get_gemini_model
 
 
 SYSTEM_PROMPT = """You answer questions about Apache NiFi Processor documentation.
@@ -24,24 +21,25 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def build_context(nodes) -> tuple[str, list[dict[str, str]]]:
+def build_context(results) -> tuple[str, list[dict[str, str]]]:
     context_blocks = []
     sources = []
+    ids = results["ids"][0]
+    documents = results["documents"][0]
+    metadatas = results["metadatas"][0]
+    distances = results["distances"][0]
 
-    for i, node_with_score in enumerate(nodes, start=1):
-        node = node_with_score.node
-        metadata = node.metadata or {}
+    for i, (chunk_id, document, metadata, distance) in enumerate(zip(ids, documents, metadatas, distances), start=1):
         file_name = metadata.get("file_name") or metadata.get("filename") or metadata.get("file_path") or "unknown"
-        chunk_id = node.node_id
         label = f"source {i}: {file_name} / {chunk_id}"
 
-        context_blocks.append(f"[{label}]\n{node.get_content(metadata_mode='none')}")
+        context_blocks.append(f"[{label}]\n{document}")
         sources.append(
             {
                 "label": f"source {i}",
                 "file_name": str(file_name),
                 "chunk_id": str(chunk_id),
-                "score": f"{node_with_score.score:.4f}" if node_with_score.score is not None else "n/a",
+                "distance": f"{distance:.4f}" if distance is not None else "n/a",
             }
         )
 
@@ -49,48 +47,41 @@ def build_context(nodes) -> tuple[str, list[dict[str, str]]]:
 
 
 def call_llm(question: str, context: str) -> str:
-    load_dotenv(PROJECT_ROOT / ".env")
-    client = OpenAI(
-        api_key=os.getenv("OPENAI_API_KEY"),
-        base_url=os.getenv("OPENAI_BASE_URL") or None,
+    client = get_gemini_client()
+    response = client.models.generate_content(
+        model=get_gemini_model(),
+        config=types.GenerateContentConfig(
+            system_instruction=SYSTEM_PROMPT,
+            temperature=0.2,
+        ),
+        contents=f"Context:\n{context}\n\nQuestion: {question}",
     )
-    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-
-    response = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": f"Context:\n{context}\n\nQuestion: {question}",
-            },
-        ],
-        temperature=0.2,
-    )
-    return response.choices[0].message.content or ""
+    return response.text or ""
 
 
 def main() -> None:
     args = parse_args()
     question = " ".join(args.question)
 
-    Settings.embed_model = get_embedding_model()
-    vector_store = get_chroma_vector_store(args.chroma_dir)
-    index = VectorStoreIndex.from_vector_store(vector_store=vector_store)
-    retriever = index.as_retriever(similarity_top_k=args.top_k)
-    retrieved_nodes = retriever.retrieve(question)
+    question_embedding = embed_texts([question], task_type="RETRIEVAL_QUERY")[0]
+    collection = get_chroma_collection(args.chroma_dir)
+    results = collection.query(
+        query_embeddings=[question_embedding],
+        n_results=args.top_k,
+        include=["documents", "metadatas", "distances"],
+    )
 
-    if not retrieved_nodes:
+    if not results["ids"] or not results["ids"][0]:
         print("No relevant chunks found. Run ingest.py first or add documents to ./docs.")
         return
 
-    context, sources = build_context(retrieved_nodes)
+    context, sources = build_context(results)
     answer = call_llm(question, context)
 
     print(answer.strip())
     print("\nSources:")
     for source in sources:
-        print(f"- {source['label']}: {source['file_name']} | chunk_id={source['chunk_id']} | score={source['score']}")
+        print(f"- {source['label']}: {source['file_name']} | chunk_id={source['chunk_id']} | distance={source['distance']}")
 
 
 if __name__ == "__main__":

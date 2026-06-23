@@ -1,6 +1,6 @@
 # nifi-rag-demo
 
-A minimal local RAG demo for Apache NiFi Processor documentation using LlamaIndex, ChromaDB, and an OpenAI-compatible chat endpoint.
+A minimal local RAG demo for Apache NiFi Processor documentation using LlamaIndex, ChromaDB, and the Gemini API.
 
 ## What it does
 
@@ -8,7 +8,7 @@ A minimal local RAG demo for Apache NiFi Processor documentation using LlamaInde
 - Chunks the files with LlamaIndex
 - Stores embeddings, chunks, and metadata in a local persistent ChromaDB collection
 - Retrieves relevant chunks for a question
-- Builds a grounded prompt and sends it to an OpenAI-compatible LLM endpoint
+- Builds a grounded prompt and sends it to the Gemini API
 - Prints the answer and the source file names / chunk IDs used
 
 ## Setup
@@ -24,13 +24,12 @@ cp .env.example .env
 Edit `.env`:
 
 ```bash
-OPENAI_API_KEY=sk-your-key
-OPENAI_BASE_URL=https://api.openai.com/v1
-OPENAI_MODEL=gpt-4o-mini
-OPENAI_EMBED_MODEL=text-embedding-3-small
+GEMINI_API_KEY=your-gemini-api-key
+GEMINI_MODEL=gemini-2.5-flash
+GEMINI_EMBED_MODEL=gemini-embedding-001
 ```
 
-For another OpenAI-compatible provider, set `OPENAI_BASE_URL`, `OPENAI_MODEL`, and `OPENAI_EMBED_MODEL` to values supported by that provider.
+Create a Gemini API key in Google AI Studio, then set `GEMINI_API_KEY` in `.env`.
 
 ## Add Documents
 
