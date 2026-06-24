@@ -57,3 +57,76 @@ topics:
       - cluster
     subquery_template: "For this NiFi processor question, find documentation about scheduling, concurrency, state management, primary-node behavior, and clustering: {question}"
     top_k: 5
+
+  - name: kafka
+    keywords:
+      - kafka
+      - topic
+      - topics
+      - broker
+      - brokers
+      - consumer group
+      - partition
+      - partitions
+      - offset
+      - offsets
+    subquery_template: "For this NiFi processor question, find documentation about Kafka processors, topics, brokers, consumer groups, partitions, offsets, publishing, and consuming: {question}"
+    top_k: 6
+
+  - name: hdfs
+    keywords:
+      - hdfs
+      - hadoop
+      - namenode
+      - name node
+      - datanode
+      - data node
+      - kerberos
+      - keytab
+      - hadoop configuration
+      - core-site.xml
+      - hdfs-site.xml
+    subquery_template: "For this NiFi processor question, find documentation about HDFS and Hadoop processors, filesystem paths, Hadoop configuration files, Kerberos, keytabs, and read/write behavior: {question}"
+    top_k: 6
+
+  - name: object_storage
+    keywords:
+      - s3
+      - amazon s3
+      - aws
+      - bucket
+      - buckets
+      - object storage
+      - azure blob
+      - gcs
+      - google cloud storage
+    subquery_template: "For this NiFi processor question, find documentation about object storage processors, buckets, credentials, object keys, listing, reading, and writing: {question}"
+    top_k: 6
+
+  - name: databases
+    keywords:
+      - database
+      - databases
+      - jdbc
+      - sql
+      - query database
+      - dbcp
+      - table
+      - tables
+      - record set writer
+    subquery_template: "For this NiFi processor question, find documentation about database and JDBC processors, SQL queries, DBCP services, tables, records, and database reads or writes: {question}"
+    top_k: 6
+
+  - name: http_api
+    keywords:
+      - http
+      - https
+      - rest
+      - api
+      - endpoint
+      - url
+      - invokehttp
+      - webhook
+    subquery_template: "For this NiFi processor question, find documentation about HTTP, HTTPS, REST API, endpoint, URL, request, response, and authentication behavior: {question}"
+    top_k: 6
+

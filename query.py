@@ -50,7 +50,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--chroma-dir", type=Path, default=DEFAULT_CHROMA_DIR, help="Directory containing the persisted ChromaDB index.")
     parser.add_argument("--top-k", type=int, default=5, help="Default number of chunks to retrieve per query.")
     parser.add_argument("--topics-file", type=Path, default=DEFAULT_TOPICS_FILE, help="YAML file containing retrieval topic definitions.")
-    parser.add_argument("--debug", action="store_true", help="Print retrieved chunk diagnostics before answering.")
+    parser.add_argument("--debug", action="store_true", help="Print the full retrieval pipeline before answering.")
     return parser.parse_args()
 
 
@@ -78,9 +78,13 @@ def load_retrieval_topics(path: Path) -> list[RetrievalTopic]:
     return topics
 
 
-def find_matched_topics(question: str, topics: list[RetrievalTopic]) -> list[RetrievalTopic]:
+def matched_keywords(question: str, topic: RetrievalTopic) -> list[str]:
     question_lower = question.lower()
-    return [topic for topic in topics if any(keyword in question_lower for keyword in topic.keywords)]
+    return [keyword for keyword in topic.keywords if keyword in question_lower]
+
+
+def find_matched_topics(question: str, topics: list[RetrievalTopic]) -> list[RetrievalTopic]:
+    return [topic for topic in topics if matched_keywords(question, topic)]
 
 
 def build_retrieval_queries(question: str, matched_topics: list[RetrievalTopic], default_top_k: int) -> list[RetrievalQuery]:
@@ -225,6 +229,36 @@ def chunk_preview(text: str, limit: int = 300) -> str:
     return preview[:limit].rstrip() + "..."
 
 
+def print_debug_retrieval_plan(
+    question: str,
+    topics_file: Path,
+    topics: list[RetrievalTopic],
+    matched_topics: list[RetrievalTopic],
+    retrieval_queries: list[RetrievalQuery],
+) -> None:
+    print("Retrieval debug")
+    print("===============")
+    print(f"Question: {question}")
+    print(f"Topics file: {topics_file}")
+    print(f"Configured topics: {len(topics)}")
+    for topic in topics:
+        top_k = topic.top_k if topic.top_k is not None else "default"
+        print(f"- {topic.name}: top_k={top_k}; keywords={', '.join(topic.keywords)}")
+
+    print("\nMatched topics:")
+    if not matched_topics:
+        print("- none")
+    for topic in matched_topics:
+        print(f"- {topic.name}: matched_keywords={', '.join(matched_keywords(question, topic))}")
+
+    print("\nRetrieval queries to execute:")
+    for i, retrieval_query in enumerate(retrieval_queries, start=1):
+        query_type = "original question" if retrieval_query.is_original else "topic subquery"
+        print(f"- query {i}: topic={retrieval_query.topic}; type={query_type}; top_k={retrieval_query.top_k}")
+        print(f"  text: {retrieval_query.text}")
+    print()
+
+
 def print_debug_chunks(query_results: list[tuple[RetrievalQuery, dict[str, Any]]]) -> None:
     print("Retrieved chunks by query:")
     for retrieval_query, results in query_results:
@@ -244,7 +278,53 @@ def print_debug_chunks(query_results: list[tuple[RetrievalQuery, dict[str, Any]]
             print(f"  chunk_id: {chunk_id}")
             print(f"  source_file: {source_file(metadata or {})}")
             print(f"  distance: {distance_text}")
-            print(f"  preview: {chunk_preview(document)}")
+    print()
+
+
+def print_debug_merge_summary(
+    chunks_by_id: dict[str, RetrievedChunk],
+    query_chunk_ids: dict[str, list[str]],
+    unsupported_topics: list[str],
+) -> None:
+    print("Merged retrieval results:")
+    print(f"- unique_chunks: {len(chunks_by_id)}")
+    for query_text, chunk_ids in query_chunk_ids.items():
+        duplicate_count = len(chunk_ids) - len(set(chunk_ids))
+        print(f"- query: {query_text}")
+        print(f"  returned_chunks: {len(chunk_ids)}")
+        print(f"  duplicate_chunk_ids_in_query: {duplicate_count}")
+        print(f"  chunk_ids: {', '.join(chunk_ids) if chunk_ids else 'none'}")
+
+    print("\nChunks after de-duplication:")
+    if not chunks_by_id:
+        print("- none")
+    for chunk in chunks_by_id.values():
+        best_distance = f"{chunk.best_distance:.4f}" if chunk.best_distance is not None else "n/a"
+        print(f"- chunk_id: {chunk.chunk_id}")
+        print(f"  source_file: {source_file(chunk.metadata)}")
+        print(f"  best_distance: {best_distance}")
+        print(f"  matched_subqueries: {' | '.join(chunk.matched_subqueries)}")
+
+    print("\nUnsupported matched topics:")
+    if not unsupported_topics:
+        print("- none")
+    for topic in unsupported_topics:
+        print(f"- {topic}")
+    print()
+
+
+def print_debug_context_summary(
+    retrieval_queries: list[RetrievalQuery],
+    query_chunk_ids: dict[str, list[str]],
+) -> None:
+    print("Final grouped context sent to LLM:")
+    print("----------------------------------")
+    for retrieval_query in retrieval_queries:
+        chunk_ids = query_chunk_ids.get(retrieval_query.text, [])
+        print(f"- topic={retrieval_query.topic}")
+        print(f"  query: {retrieval_query.text}")
+        print(f"  chunk_ids: {', '.join(chunk_ids) if chunk_ids else 'none'}")
+    print("----------------------------------")
     print()
 
 
@@ -268,14 +348,13 @@ def main() -> None:
     topics = load_retrieval_topics(args.topics_file)
     matched_topics = find_matched_topics(question, topics)
     retrieval_queries = build_retrieval_queries(question, matched_topics, args.top_k)
+
+    if args.debug:
+        print_debug_retrieval_plan(question, args.topics_file, topics, matched_topics, retrieval_queries)
+
     collection = get_chroma_collection(args.chroma_dir)
     query_results = [(retrieval_query, query_collection(collection, retrieval_query)) for retrieval_query in retrieval_queries]
     chunks_by_id, query_chunk_ids = merge_retrieval_results(query_results)
-
-    if not chunks_by_id:
-        print("No relevant chunks found. Run ingest.py first or add documents to ./docs.")
-        return
-
     unsupported_topics = [
         retrieval_query.topic
         for retrieval_query in retrieval_queries
@@ -284,8 +363,16 @@ def main() -> None:
 
     if args.debug:
         print_debug_chunks(query_results)
+        print_debug_merge_summary(chunks_by_id, query_chunk_ids, unsupported_topics)
+
+    if not chunks_by_id:
+        print("No relevant chunks found. Run ingest.py first or add documents to ./docs.")
+        return
 
     context, sources = build_context(retrieval_queries, chunks_by_id, query_chunk_ids, unsupported_topics)
+    if args.debug:
+        print_debug_context_summary(retrieval_queries, query_chunk_ids)
+
     answer = call_llm(question, context)
 
     print(answer.strip())
