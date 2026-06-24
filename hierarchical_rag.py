@@ -20,11 +20,47 @@ class RetrievedChunk:
 
 
 @dataclass(frozen=True)
-class EvidenceSummary:
+class EvidenceItem:
+    name: str = ""
+    description: str = ""
+    step: str = ""
+    source_chunk: str = ""
+
+
+@dataclass(frozen=True)
+class StructuredEvidence:
     subquery: str
-    supported: bool
-    evidence: list[str] = field(default_factory=list)
-    sources: list[str] = field(default_factory=list)
+    topic: str = ""
+    purpose: str = ""
+    processor_names: list[str] = field(default_factory=list)
+    required_properties: list[EvidenceItem] = field(default_factory=list)
+    optional_properties: list[EvidenceItem] = field(default_factory=list)
+    relationships: list[str] = field(default_factory=list)
+    configuration_steps: list[EvidenceItem] = field(default_factory=list)
+    warnings_or_constraints: list[str] = field(default_factory=list)
+    unsupported_or_missing_details: list[str] = field(default_factory=list)
+
+    @property
+    def supported(self) -> bool:
+        return any(
+            [
+                self.purpose,
+                self.processor_names,
+                self.required_properties,
+                self.optional_properties,
+                self.relationships,
+                self.configuration_steps,
+                self.warnings_or_constraints,
+            ]
+        )
+
+    @property
+    def sources(self) -> list[str]:
+        sources = []
+        for item in self.required_properties + self.optional_properties + self.configuration_steps:
+            if item.source_chunk and item.source_chunk not in sources:
+                sources.append(item.source_chunk)
+        return sources
 
 
 @dataclass(frozen=True)
@@ -32,7 +68,7 @@ class HierarchicalRagResult:
     question: str
     subqueries: list[str]
     retrievals: dict[str, list[RetrievedChunk]]
-    evidence_summaries: list[EvidenceSummary]
+    evidence_summaries: list[StructuredEvidence]
     final_prompt: str
     answer: str
 
@@ -154,55 +190,112 @@ def build_evidence_extraction_prompt(subquery: str, chunks: list[RetrievedChunk]
     )
 
 
-def extract_evidence(subquery: str, chunks: list[RetrievedChunk]) -> EvidenceSummary:
+def as_string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def parse_evidence_items(value: Any, allowed_sources: set[str], *, step_mode: bool = False) -> list[EvidenceItem]:
+    if not isinstance(value, list):
+        return []
+
+    items = []
+    for raw_item in value:
+        if not isinstance(raw_item, dict):
+            continue
+        source_chunk = str(raw_item.get("source_chunk") or "").strip()
+        if source_chunk not in allowed_sources:
+            continue
+        item = EvidenceItem(
+            name=str(raw_item.get("name") or "").strip(),
+            description=str(raw_item.get("description") or "").strip(),
+            step=str(raw_item.get("step") or "").strip(),
+            source_chunk=source_chunk,
+        )
+        if step_mode and item.step:
+            items.append(item)
+        elif not step_mode and item.name:
+            items.append(item)
+    return items
+
+
+def extract_evidence(subquery: str, chunks: list[RetrievedChunk]) -> StructuredEvidence:
     if not chunks:
-        return EvidenceSummary(subquery=subquery, supported=False)
+        return StructuredEvidence(
+            subquery=subquery,
+            topic=subquery,
+            unsupported_or_missing_details=["No chunks were retrieved for this subquery."],
+        )
 
     payload = generate_json(
         EVIDENCE_EXTRACTION_SYSTEM_PROMPT,
         build_evidence_extraction_prompt(subquery, chunks),
     )
-    evidence = [str(item).strip() for item in payload.get("evidence", []) if str(item).strip()]
     allowed_sources = {chunk.chunk_id for chunk in chunks}
-    sources = []
-    for item in payload.get("sources", []):
-        source = str(item).strip()
-        if source in allowed_sources and source not in sources:
-            sources.append(source)
-    supported = bool(payload.get("supported")) and bool(evidence) and bool(sources)
-    return EvidenceSummary(
-        subquery=str(payload.get("subquery") or subquery),
-        supported=supported,
-        evidence=evidence if supported else [],
-        sources=sources if supported else [],
+    unsupported = as_string_list(payload.get("unsupported_or_missing_details"))
+    if not unsupported and not any(
+        [
+            payload.get("purpose"),
+            payload.get("processor_names"),
+            payload.get("required_properties"),
+            payload.get("optional_properties"),
+            payload.get("relationships"),
+            payload.get("configuration_steps"),
+            payload.get("warnings_or_constraints"),
+        ]
+    ):
+        unsupported = ["No directly relevant structured evidence was found in the retrieved chunks."]
+
+    return StructuredEvidence(
+        subquery=subquery,
+        topic=str(payload.get("topic") or subquery).strip(),
+        purpose=str(payload.get("purpose") or "").strip(),
+        processor_names=as_string_list(payload.get("processor_names")),
+        required_properties=parse_evidence_items(payload.get("required_properties"), allowed_sources),
+        optional_properties=parse_evidence_items(payload.get("optional_properties"), allowed_sources),
+        relationships=as_string_list(payload.get("relationships")),
+        configuration_steps=parse_evidence_items(payload.get("configuration_steps"), allowed_sources, step_mode=True),
+        warnings_or_constraints=as_string_list(payload.get("warnings_or_constraints")),
+        unsupported_or_missing_details=unsupported,
     )
 
 
-def format_evidence_lines(summary: EvidenceSummary) -> str:
-    if not summary.evidence:
-        return "- unsupported by indexed docs"
-    return "\n".join(f"- {item}" for item in summary.evidence)
+def evidence_item_to_dict(item: EvidenceItem, *, step_mode: bool = False) -> dict[str, str]:
+    if step_mode:
+        return {"step": item.step, "source_chunk": item.source_chunk}
+    return {
+        "name": item.name,
+        "description": item.description,
+        "source_chunk": item.source_chunk,
+    }
 
 
-def build_final_prompt(question: str, evidence_summaries: list[EvidenceSummary]) -> str:
-    blocks = []
-    for i, summary in enumerate(evidence_summaries, start=1):
-        blocks.append(
-            f"Evidence summary {i}\n"
-            f"Subquery: {summary.subquery}\n"
-            f"Supported: {summary.supported}\n"
-            f"Evidence:\n{format_evidence_lines(summary)}\n"
-            f"Sources: {', '.join(summary.sources) if summary.sources else 'none'}"
-        )
+def structured_evidence_to_dict(summary: StructuredEvidence) -> dict[str, Any]:
+    return {
+        "subquery": summary.subquery,
+        "topic": summary.topic,
+        "purpose": summary.purpose,
+        "processor_names": summary.processor_names,
+        "required_properties": [evidence_item_to_dict(item) for item in summary.required_properties],
+        "optional_properties": [evidence_item_to_dict(item) for item in summary.optional_properties],
+        "relationships": summary.relationships,
+        "configuration_steps": [evidence_item_to_dict(item, step_mode=True) for item in summary.configuration_steps],
+        "warnings_or_constraints": summary.warnings_or_constraints,
+        "unsupported_or_missing_details": summary.unsupported_or_missing_details,
+    }
 
+
+def build_final_prompt(question: str, evidence_summaries: list[StructuredEvidence]) -> str:
+    evidence_payload = [structured_evidence_to_dict(summary) for summary in evidence_summaries]
     return (
         f"User question:\n{question}\n\n"
-        "Evidence summaries:\n"
-        + "\n\n---\n\n".join(blocks)
+        "Structured evidence JSON:\n"
+        + json.dumps(evidence_payload, indent=2)
     )
 
 
-def generate_final_answer(question: str, evidence_summaries: list[EvidenceSummary]) -> tuple[str, str]:
+def generate_final_answer(question: str, evidence_summaries: list[StructuredEvidence]) -> tuple[str, str]:
     final_prompt = build_final_prompt(question, evidence_summaries)
     answer = generate_text(FINAL_ANSWER_SYSTEM_PROMPT, final_prompt)
     return answer, final_prompt
@@ -247,15 +340,8 @@ def print_debug_result(result: HierarchicalRagResult) -> None:
             print(f"- chunk_id={chunk.chunk_id} source_file={source_file(chunk.metadata)} distance={distance}")
 
     for i, summary in enumerate(result.evidence_summaries, start=1):
-        print(f"\n=== Evidence: subquery {i} ===")
-        print(f"subquery: {summary.subquery}")
-        print(f"supported: {summary.supported}")
-        print(f"sources: {', '.join(summary.sources) if summary.sources else 'none'}")
-        print("evidence:")
-        for item in summary.evidence:
-            print(f"- {item}")
-        if not summary.evidence:
-            print("- unsupported by indexed docs")
+        print(f"\n=== Structured Evidence: subquery {i} ===")
+        print(json.dumps(structured_evidence_to_dict(summary), indent=2))
 
     print("\n=== Final Answer Prompt ===")
     print(result.final_prompt)

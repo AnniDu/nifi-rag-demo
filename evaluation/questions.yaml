@@ -1,0 +1,86 @@
+- id: q001
+  question: "How do I define a PropertyDescriptor in a NiFi Processor?"
+  category: property_descriptor
+  expected_topics:
+    - PropertyDescriptor
+    - Builder
+  notes: "Should retrieve docs or code examples showing PropertyDescriptor.Builder."
+
+- id: q002
+  question: "How do I mark a NiFi processor property as required?"
+  category: property_descriptor
+  expected_topics:
+    - PropertyDescriptor
+    - required
+  notes: "Should identify the required flag or builder method used for required properties."
+
+- id: q003
+  question: "What relationships should a NiFi Processor define for success and failure paths?"
+  category: relationship
+  expected_topics:
+    - Relationship
+    - success
+    - failure
+  notes: "Should retrieve relationship definitions or code showing success/failure relationships."
+
+- id: q004
+  question: "How do I consume messages from Kafka in NiFi?"
+  category: kafka
+  expected_topics:
+    - Kafka
+    - ConsumeKafka
+  notes: "Should retrieve Kafka processor docs or code for consuming from Kafka topics."
+
+- id: q005
+  question: "What configuration is needed to write FlowFiles to HDFS in NiFi?"
+  category: hdfs
+  expected_topics:
+    - HDFS
+    - Hadoop Configuration Resources
+  notes: "Should retrieve HDFS processor configuration details, especially Hadoop config and path settings."
+
+- id: q006
+  question: "How do I consume from Kafka and write the data to HDFS in NiFi?"
+  category: kafka_to_hdfs
+  expected_topics:
+    - Kafka
+    - HDFS
+    - ConsumeKafka
+    - PutHDFS
+  notes: "Should decompose into Kafka consumption and HDFS write evidence instead of letting domains compete."
+
+- id: q007
+  question: "What should happen inside a NiFi Processor onTrigger method?"
+  category: ontrigger
+  expected_topics:
+    - onTrigger
+    - ProcessSession
+    - FlowFile
+  notes: "Should retrieve processor implementation docs or code showing session operations inside onTrigger."
+
+- id: q008
+  question: "What are the important lifecycle methods for a NiFi Processor?"
+  category: processor_lifecycle
+  expected_topics:
+    - lifecycle
+    - init
+    - onScheduled
+    - onStopped
+  notes: "Should retrieve docs or examples for processor lifecycle annotations and methods."
+
+- id: q009
+  question: "How do I define and use processor relationships in custom NiFi processor code?"
+  category: relationship
+  expected_topics:
+    - Relationship.Builder
+    - getRelationships
+  notes: "Should retrieve code examples for relationship declaration and exposing relationships."
+
+- id: q010
+  question: "How do I configure a processor to write records to Iceberg?"
+  category: kafka_to_hdfs
+  expected_topics:
+    - Iceberg
+    - records
+    - catalog
+  notes: "Should show whether indexed docs contain Iceberg details and mark missing details if unsupported."

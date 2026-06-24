@@ -71,16 +71,70 @@ python3 query.py "How does ExecuteScript handle processor properties?" --top-k 8
 python3 query.py "How do I consume Kafka messages?" --debug
 ```
 
-Use `--debug` to print each retrieved chunk id, source file, distance, and the first 300 characters before the answer.
+Use `--debug` to print decomposition, per-subquery retrieved chunk ids, structured evidence, and the final answer prompt.
 
-The answer is grounded only in retrieved chunks. If the retrieved context does not contain the answer, the model is instructed to say it does not know.
+The hierarchical answer is grounded in structured evidence extracted from retrieved chunks. Raw chunks are used for evidence extraction, but the final answer model receives only the user question and structured evidence.
+
+## Evaluation
+
+This project includes a lightweight inspection/regression harness under `evaluation/`.
+
+Evaluation questions live in `evaluation/questions.yaml`. Add a new question as a YAML list item:
+
+```yaml
+- id: q011
+  question: "How do I configure a NiFi processor property?"
+  category: property_descriptor
+  expected_topics:
+    - PropertyDescriptor
+    - required
+  notes: "What you expect retrieval/evidence to include."
+```
+
+Run the first three questions with a tag:
+
+```bash
+python3 evaluation/run_eval.py --limit 3 --tag baseline
+```
+
+Useful options:
+
+```bash
+python3 evaluation/run_eval.py --top-k 3 --tag top3
+python3 evaluation/run_eval.py --questions-file evaluation/questions.yaml --chroma-dir ./chroma_db
+```
+
+Each run writes a timestamped JSON file under `evaluation/runs/`, for example:
+
+```text
+evaluation/runs/run_2026_06_24_153000_baseline.json
+```
+
+The JSON captures the question metadata, decomposed subqueries, retrieved chunk ids, source files, distances, structured evidence, final answer, timestamp, `top_k`, Gemini model, and embedding model.
+
+To compare results manually, run the same question set with different tags, then inspect or diff the JSON files:
+
+```bash
+python3 evaluation/run_eval.py --limit 3 --top-k 5 --tag baseline_top5
+python3 evaluation/run_eval.py --limit 3 --top-k 8 --tag top8
+ls evaluation/runs/
+diff -u evaluation/runs/<baseline>.json evaluation/runs/<candidate>.json
+```
+
+There is no automatic LLM grading yet. Treat these outputs as inspection artifacts for retrieval and answer regression checks.
 
 ## Project Layout
 
 ```text
 nifi-rag-demo/
   docs/
+  evaluation/
+    questions.yaml
+    run_eval.py
+    runs/
+  hierarchical_rag.py
   ingest.py
+  prompts.py
   query.py
   rag_config.py
   requirements.txt

@@ -7,3 +7,5 @@ __pycache__/
 chroma_db/
 
 .DS_Store
+evaluation/runs/*.json
+!evaluation/runs/.gitkeep
