@@ -1,0 +1,59 @@
+topics:
+  - name: processor_properties
+    keywords:
+      - property
+      - properties
+      - configuration
+      - configure
+      - required
+      - default value
+    subquery_template: "For this NiFi processor question, find documentation about processor properties, configuration options, defaults, and required settings: {question}"
+    top_k: 5
+
+  - name: relationships
+    keywords:
+      - relationship
+      - relationships
+      - success
+      - failure
+      - retry
+      - route
+      - routes
+    subquery_template: "For this NiFi processor question, find documentation about relationships, routing behavior, success paths, failure paths, and retry behavior: {question}"
+    top_k: 5
+
+  - name: dynamic_properties
+    keywords:
+      - dynamic property
+      - dynamic properties
+      - expression language
+      - variable
+      - variables
+      - parameter
+      - parameters
+    subquery_template: "For this NiFi processor question, find documentation about dynamic properties, Expression Language support, variables, and parameters: {question}"
+    top_k: 5
+
+  - name: controller_services
+    keywords:
+      - controller service
+      - controller services
+      - service
+      - services
+      - ssl context
+      - record reader
+      - record writer
+    subquery_template: "For this NiFi processor question, find documentation about controller service dependencies and service configuration: {question}"
+    top_k: 5
+
+  - name: scheduling_and_state
+    keywords:
+      - schedule
+      - scheduling
+      - concurrent tasks
+      - state
+      - stateful
+      - primary node
+      - cluster
+    subquery_template: "For this NiFi processor question, find documentation about scheduling, concurrency, state management, primary-node behavior, and clustering: {question}"
+    top_k: 5
