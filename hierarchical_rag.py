@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import json
+import contextlib
+import sys
+import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from google.genai import types
+import yaml
 
 from prompts import DECOMPOSITION_SYSTEM_PROMPT, EVIDENCE_EXTRACTION_SYSTEM_PROMPT, FINAL_ANSWER_SYSTEM_PROMPT
-from rag_config import DEFAULT_CHROMA_DIR, embed_texts, get_chroma_collection, get_gemini_client, get_gemini_model
+from rag_config import DEFAULT_CHROMA_DIR, PROJECT_ROOT, embed_texts, generate_text as generate_model_text, get_chroma_collection, get_evidence_mode, get_max_chars_per_chunk
 
 
 @dataclass(frozen=True)
@@ -71,6 +75,7 @@ class HierarchicalRagResult:
     evidence_summaries: list[StructuredEvidence]
     final_prompt: str
     answer: str
+    timing_checkpoints: list[dict[str, Any]] = field(default_factory=list)
 
 
 def source_file(metadata: dict[str, Any]) -> str:
@@ -95,46 +100,105 @@ def parse_json_object(text: str) -> dict[str, Any]:
 
 
 def generate_json(system_prompt: str, contents: str) -> dict[str, Any]:
-    client = get_gemini_client()
-    response = client.models.generate_content(
-        model=get_gemini_model(),
-        config=types.GenerateContentConfig(
-            system_instruction=system_prompt,
-            temperature=0.1,
-            response_mime_type="application/json",
-        ),
-        contents=contents,
-    )
-    return parse_json_object(response.text or "{}")
+    return parse_json_object(generate_model_text(system_prompt, contents, json_output=True) or "{}")
 
 
 def generate_text(system_prompt: str, contents: str) -> str:
-    client = get_gemini_client()
-    response = client.models.generate_content(
-        model=get_gemini_model(),
-        config=types.GenerateContentConfig(
-            system_instruction=system_prompt,
-            temperature=0.2,
-        ),
-        contents=contents,
-    )
-    return response.text or ""
+    return generate_model_text(system_prompt, contents)
+
+
+def now_timestamp() -> str:
+    return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def emit_timing_checkpoint(
+    checkpoints: list[dict[str, Any]],
+    label: str,
+    started_at: float,
+    *,
+    detail: str = "",
+    live: bool = False,
+) -> None:
+    elapsed_seconds = time.perf_counter() - started_at
+    checkpoint = {
+        "timestamp": now_timestamp(),
+        "elapsed_seconds": round(elapsed_seconds, 3),
+        "label": label,
+        "detail": detail,
+    }
+    checkpoints.append(checkpoint)
+    if live:
+        detail_suffix = f" | {detail}" if detail else ""
+        print(
+            f"[rag timing] {checkpoint['timestamp']} +{checkpoint['elapsed_seconds']:.3f}s "
+            f"{label}{detail_suffix}",
+            file=sys.stderr,
+            flush=True,
+        )
+
+
+def load_retrieval_topics() -> list[dict[str, Any]]:
+    config_path = PROJECT_ROOT / "retrieval_topics.yaml"
+    if not config_path.exists():
+        return []
+    with config_path.open("r", encoding="utf-8") as handle:
+        payload = yaml.safe_load(handle) or {}
+    topics = payload.get("topics")
+    return topics if isinstance(topics, list) else []
+
+
+def decompose_question_from_topics(question: str) -> list[str]:
+    question_lower = question.lower()
+    subqueries = []
+
+    if "kafka" in question_lower and any(word in question_lower for word in ["read", "consume", "consumer"]):
+        subqueries.append(f"ConsumeKafka processor configuration for reading messages from Kafka in NiFi: {question}")
+    elif "kafka" in question_lower and any(word in question_lower for word in ["write", "publish", "produce", "producer"]):
+        subqueries.append(f"PublishKafka processor configuration for writing messages to Kafka in NiFi: {question}")
+
+    if "hdfs" in question_lower and any(word in question_lower for word in ["write", "put", "store", "send"]):
+        subqueries.append(f"PutHDFS processor configuration for writing FlowFiles to HDFS in NiFi: {question}")
+    elif "hdfs" in question_lower and any(word in question_lower for word in ["read", "get", "fetch", "list", "ingest"]):
+        subqueries.append(f"GetHDFS FetchHDFS ListHDFS processor configuration for reading from HDFS in NiFi: {question}")
+
+    if len(subqueries) > 1:
+        return subqueries
+
+    for topic in load_retrieval_topics():
+        if not isinstance(topic, dict):
+            continue
+        keywords = topic.get("keywords") or []
+        if not any(str(keyword).lower() in question_lower for keyword in keywords):
+            continue
+        template = str(topic.get("subquery_template") or "{question}")
+        subquery = template.format(question=question).strip()
+        if subquery and subquery not in subqueries:
+            subqueries.append(subquery)
+
+    return subqueries if len(subqueries) > 1 else []
 
 
 def decompose_question(question: str) -> list[str]:
-    payload = generate_json(
-        DECOMPOSITION_SYSTEM_PROMPT,
-        f"Question:\n{question}",
-    )
-    subqueries = []
-    seen = set()
-    for item in payload.get("subqueries", []):
-        subquery = str(item).strip()
-        subquery_key = subquery.lower()
-        if subquery and subquery_key not in seen:
-            subqueries.append(subquery)
-            seen.add(subquery_key)
-    return subqueries or [question]
+    topic_subqueries = decompose_question_from_topics(question)
+    if topic_subqueries:
+        return topic_subqueries
+
+    with contextlib.suppress(json.JSONDecodeError, RuntimeError):
+        payload = generate_json(
+            DECOMPOSITION_SYSTEM_PROMPT,
+            f"Question:\n{question}",
+        )
+        subqueries = []
+        seen = set()
+        for item in payload.get("subqueries", []):
+            subquery = str(item).strip()
+            subquery_key = subquery.lower()
+            if subquery and subquery_key not in seen:
+                subqueries.append(subquery)
+                seen.add(subquery_key)
+        return subqueries or [question]
+
+    return [question]
 
 
 def get_first_result_list(results: dict[str, Any], key: str) -> list[Any]:
@@ -169,6 +233,13 @@ def retrieve_for_subquery(collection, subquery: str, top_k: int) -> list[Retriev
     return chunks
 
 
+def truncate_chunk_text(text: str) -> str:
+    max_chars = get_max_chars_per_chunk()
+    if max_chars <= 0 or len(text) <= max_chars:
+        return text
+    return text[:max_chars].rstrip() + f"\n...[truncated to {max_chars} chars]"
+
+
 def build_evidence_extraction_prompt(subquery: str, chunks: list[RetrievedChunk]) -> str:
     chunk_blocks = []
     for i, chunk in enumerate(chunks, start=1):
@@ -178,7 +249,7 @@ def build_evidence_extraction_prompt(subquery: str, chunks: list[RetrievedChunk]
             f"chunk_id: {chunk.chunk_id}\n"
             f"source_file: {source_file(chunk.metadata)}\n"
             f"distance: {distance}\n"
-            f"text:\n{chunk.text}"
+            f"text:\n{truncate_chunk_text(chunk.text)}"
         )
 
     valid_source_ids = ", ".join(chunk.chunk_id for chunk in chunks)
@@ -221,6 +292,15 @@ def parse_evidence_items(value: Any, allowed_sources: set[str], *, step_mode: bo
 
 
 def extract_evidence(subquery: str, chunks: list[RetrievedChunk]) -> StructuredEvidence:
+    if get_evidence_mode() == "skip":
+        return StructuredEvidence(
+            subquery=subquery,
+            topic=subquery,
+            unsupported_or_missing_details=[
+                "LLM evidence extraction is disabled for this run; retrieved chunks were not converted into structured evidence."
+            ],
+        )
+
     if not chunks:
         return StructuredEvidence(
             subquery=subquery,
@@ -228,10 +308,19 @@ def extract_evidence(subquery: str, chunks: list[RetrievedChunk]) -> StructuredE
             unsupported_or_missing_details=["No chunks were retrieved for this subquery."],
         )
 
-    payload = generate_json(
-        EVIDENCE_EXTRACTION_SYSTEM_PROMPT,
-        build_evidence_extraction_prompt(subquery, chunks),
-    )
+    try:
+        payload = generate_json(
+            EVIDENCE_EXTRACTION_SYSTEM_PROMPT,
+            build_evidence_extraction_prompt(subquery, chunks),
+        )
+    except (json.JSONDecodeError, RuntimeError):
+        return StructuredEvidence(
+            subquery=subquery,
+            topic=subquery,
+            unsupported_or_missing_details=[
+                "The local model did not return valid structured evidence JSON for this subquery."
+            ],
+        )
     allowed_sources = {chunk.chunk_id for chunk in chunks}
     unsupported = as_string_list(payload.get("unsupported_or_missing_details"))
     if not unsupported and not any(
@@ -295,24 +384,96 @@ def build_final_prompt(question: str, evidence_summaries: list[StructuredEvidenc
     )
 
 
+def build_unsupported_answer(question: str, evidence_summaries: list[StructuredEvidence]) -> str:
+    lines = [
+        "I cannot answer this from the indexed documents because structured evidence extraction did not produce supported evidence.",
+        "",
+        "Unsupported parts:",
+    ]
+    for summary in evidence_summaries:
+        details = summary.unsupported_or_missing_details or ["No supported evidence was extracted."]
+        lines.append(f"- {summary.subquery}: {'; '.join(details)}")
+    return "\n".join(lines)
+
+
+def all_evidence_unsupported(evidence_summaries: list[StructuredEvidence]) -> bool:
+    return bool(evidence_summaries) and all(not summary.supported for summary in evidence_summaries)
+
+
 def generate_final_answer(question: str, evidence_summaries: list[StructuredEvidence]) -> tuple[str, str]:
     final_prompt = build_final_prompt(question, evidence_summaries)
+    if all_evidence_unsupported(evidence_summaries):
+        return build_unsupported_answer(question, evidence_summaries), final_prompt
     answer = generate_text(FINAL_ANSWER_SYSTEM_PROMPT, final_prompt)
     return answer, final_prompt
 
 
-def answer_hierarchical(question: str, chroma_dir: Path = DEFAULT_CHROMA_DIR, top_k: int = 5) -> HierarchicalRagResult:
+def answer_hierarchical(
+    question: str,
+    chroma_dir: Path = DEFAULT_CHROMA_DIR,
+    top_k: int = 5,
+    *,
+    timing: bool = False,
+) -> HierarchicalRagResult:
+    started_at = time.perf_counter()
+    timing_checkpoints: list[dict[str, Any]] = []
+    emit_timing_checkpoint(timing_checkpoints, "start", started_at, detail=f"top_k={top_k}", live=timing)
+
+    emit_timing_checkpoint(timing_checkpoints, "decomposition:start", started_at, live=timing)
     subqueries = decompose_question(question)
+    emit_timing_checkpoint(
+        timing_checkpoints,
+        "decomposition:end",
+        started_at,
+        detail=f"subqueries={len(subqueries)}",
+        live=timing,
+    )
+
+    emit_timing_checkpoint(timing_checkpoints, "chroma_collection:start", started_at, detail=str(chroma_dir), live=timing)
     collection = get_chroma_collection(chroma_dir)
+    emit_timing_checkpoint(timing_checkpoints, "chroma_collection:end", started_at, live=timing)
 
     retrievals: dict[str, list[RetrievedChunk]] = {}
     evidence_summaries = []
-    for subquery in subqueries:
+    for i, subquery in enumerate(subqueries, start=1):
+        step_detail = f"subquery={i}/{len(subqueries)}"
+        emit_timing_checkpoint(
+            timing_checkpoints,
+            "retrieval:start",
+            started_at,
+            detail=f"{step_detail}: {subquery}",
+            live=timing,
+        )
         chunks = retrieve_for_subquery(collection, subquery, top_k)
         retrievals[subquery] = chunks
-        evidence_summaries.append(extract_evidence(subquery, chunks))
+        emit_timing_checkpoint(
+            timing_checkpoints,
+            "retrieval:end",
+            started_at,
+            detail=f"{step_detail} chunks={len(chunks)}",
+            live=timing,
+        )
 
+        emit_timing_checkpoint(
+            timing_checkpoints,
+            "evidence_extraction:start",
+            started_at,
+            detail=f"{step_detail}: {subquery}",
+            live=timing,
+        )
+        evidence_summaries.append(extract_evidence(subquery, chunks))
+        emit_timing_checkpoint(
+            timing_checkpoints,
+            "evidence_extraction:end",
+            started_at,
+            detail=step_detail,
+            live=timing,
+        )
+
+    emit_timing_checkpoint(timing_checkpoints, "final_answer:start", started_at, live=timing)
     answer, final_prompt = generate_final_answer(question, evidence_summaries)
+    emit_timing_checkpoint(timing_checkpoints, "final_answer:end", started_at, live=timing)
+    emit_timing_checkpoint(timing_checkpoints, "done", started_at, live=timing)
     return HierarchicalRagResult(
         question=question,
         subqueries=subqueries,
@@ -320,6 +481,7 @@ def answer_hierarchical(question: str, chroma_dir: Path = DEFAULT_CHROMA_DIR, to
         evidence_summaries=evidence_summaries,
         final_prompt=final_prompt,
         answer=answer,
+        timing_checkpoints=timing_checkpoints,
     )
 
 

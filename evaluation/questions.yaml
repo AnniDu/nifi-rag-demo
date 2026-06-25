@@ -1,86 +1,99 @@
 - id: q001
-  question: "How do I define a PropertyDescriptor in a NiFi Processor?"
-  category: property_descriptor
-  expected_topics:
-    - PropertyDescriptor
-    - Builder
-  notes: "Should retrieve docs or code examples showing PropertyDescriptor.Builder."
-
-- id: q002
-  question: "How do I mark a NiFi processor property as required?"
-  category: property_descriptor
-  expected_topics:
-    - PropertyDescriptor
-    - required
-  notes: "Should identify the required flag or builder method used for required properties."
-
-- id: q003
-  question: "What relationships should a NiFi Processor define for success and failure paths?"
-  category: relationship
-  expected_topics:
-    - Relationship
-    - success
-    - failure
-  notes: "Should retrieve relationship definitions or code showing success/failure relationships."
-
-- id: q004
-  question: "How do I consume messages from Kafka in NiFi?"
+  question: "How do I read messages from Kafka in NiFi?"
   category: kafka
   expected_topics:
     - Kafka
     - ConsumeKafka
-  notes: "Should retrieve Kafka processor docs or code for consuming from Kafka topics."
+    - topic
+    - broker
+  notes: "Should retrieve Kafka consumer processor docs and required broker/topic configuration."
 
-- id: q005
-  question: "What configuration is needed to write FlowFiles to HDFS in NiFi?"
+- id: q002
+  question: "How do I ingest files from HDFS in NiFi?"
   category: hdfs
   expected_topics:
     - HDFS
+    - GetHDFS
     - Hadoop Configuration Resources
-  notes: "Should retrieve HDFS processor configuration details, especially Hadoop config and path settings."
+  notes: "Should retrieve HDFS read/ingest processor details, including HDFS paths and Hadoop configuration."
 
-- id: q006
-  question: "How do I consume from Kafka and write the data to HDFS in NiFi?"
+- id: q003
+  question: "How do I ingest data from HDFS and put it to S3 in NiFi?"
+  category: hdfs_to_s3
+  expected_topics:
+    - HDFS
+    - S3
+    - object storage
+    - AWS credentials
+  notes: "Should decompose into HDFS ingestion and S3 write/upload steps with concrete processor configuration."
+
+- id: q004
+  question: "How do I consume Kafka records and write them to HDFS?"
   category: kafka_to_hdfs
   expected_topics:
     - Kafka
     - HDFS
     - ConsumeKafka
     - PutHDFS
-  notes: "Should decompose into Kafka consumption and HDFS write evidence instead of letting domains compete."
+  notes: "Should retrieve evidence for Kafka consumption and HDFS writes without one domain crowding out the other."
+
+- id: q005
+  question: "How do I consume from Kafka and write the records to S3?"
+  category: kafka_to_s3
+  expected_topics:
+    - Kafka
+    - S3
+    - ConsumeKafka
+    - PutS3Object
+  notes: "Should identify Kafka read configuration and S3 bucket/object write configuration if indexed docs support them."
+
+- id: q006
+  question: "How do I move files from a local directory into HDFS using NiFi?"
+  category: file_to_hdfs
+  expected_topics:
+    - local files
+    - HDFS
+    - GetFile
+    - PutHDFS
+  notes: "Should retrieve file ingestion and HDFS output processor evidence."
 
 - id: q007
-  question: "What should happen inside a NiFi Processor onTrigger method?"
-  category: ontrigger
+  question: "How do I pull data from an HTTP API and publish it to Kafka in NiFi?"
+  category: http_to_kafka
   expected_topics:
-    - onTrigger
-    - ProcessSession
-    - FlowFile
-  notes: "Should retrieve processor implementation docs or code showing session operations inside onTrigger."
+    - HTTP
+    - REST API
+    - Kafka
+    - PublishKafka
+  notes: "Should decompose into HTTP/API retrieval and Kafka publishing configuration."
 
 - id: q008
-  question: "What are the important lifecycle methods for a NiFi Processor?"
-  category: processor_lifecycle
+  question: "How do I read records from a database and publish them to Kafka?"
+  category: database_to_kafka
   expected_topics:
-    - lifecycle
-    - init
-    - onScheduled
-    - onStopped
-  notes: "Should retrieve docs or examples for processor lifecycle annotations and methods."
+    - JDBC
+    - database
+    - Kafka
+    - PublishKafka
+  notes: "Should retrieve database/JDBC read processors and Kafka producer configuration."
 
 - id: q009
-  question: "How do I define and use processor relationships in custom NiFi processor code?"
-  category: relationship
+  question: "How do I route failed Kafka or HDFS pipeline records for retry or failure handling?"
+  category: pipeline_error_handling
   expected_topics:
-    - Relationship.Builder
-    - getRelationships
-  notes: "Should retrieve code examples for relationship declaration and exposing relationships."
+    - relationships
+    - failure
+    - retry
+    - Kafka
+    - HDFS
+  notes: "Should retrieve processor relationships and failure/retry routing evidence for pipeline error handling."
 
 - id: q010
-  question: "How do I configure a processor to write records to Iceberg?"
-  category: kafka_to_hdfs
+  question: "How do I build a pipeline that reads Kafka events, transforms records, and writes to Iceberg?"
+  category: kafka_to_iceberg
   expected_topics:
-    - Iceberg
+    - Kafka
     - records
-    - catalog
-  notes: "Should show whether indexed docs contain Iceberg details and mark missing details if unsupported."
+    - transformation
+    - Iceberg
+  notes: "Should decompose into Kafka read, record transformation, and Iceberg write evidence; unsupported Iceberg details should be explicit."

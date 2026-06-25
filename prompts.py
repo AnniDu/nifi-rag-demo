@@ -9,7 +9,8 @@ Use this schema:
 }
 Rules:
 - Always return at least one subquery.
-- If the question is simple, return one subquery close to the original question.
+- If the question is simple or mentions only one concept, return exactly one subquery close to the original question.
+- For a short entity-only question such as "Kafka", return one subquery, not a list of related topics.
 - If the question mentions multiple systems, processors, destinations, formats, or concepts, split them into separate subqueries.
 - Make each subquery specific, standalone, and retrieval-oriented.
 - Keep each subquery about Apache NiFi.
